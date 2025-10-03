@@ -1,28 +1,38 @@
 "use client"
 
-import { useState } from "react"
-import { AlertCircle } from "lucide-react"
+import { useState, useEffect } from "react"
+import { AlertCircle, RotateCcw } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { Button } from "@/components/ui/button"
+import { useAppStore } from "@/lib/store"
+import { getTemplateById } from "@/lib/catalog"
+import { evalWarnings } from "@/lib/rules"
+import { fmtInches, parseInches, clampToAllowed } from "@/lib/units"
+import { Instance, Template } from "@/lib/types"
 
-interface RightPanelProps {
-  selectedItem: any
-  onChangeProperty: (property: string, value: any) => void
-}
-
-const validateEighthInch = (value: number): boolean => {
-  const remainder = (value * 8) % 1
-  return Math.abs(remainder) < 0.001 // Account for floating point precision
-}
-
-const roundToEighthInch = (value: number): number => {
-  return Math.round(value * 8) / 8
-}
-
-export function RightPanel({ selectedItem, onChangeProperty }: RightPanelProps) {
+export function RightPanel() {
   const [activeTab, setActiveTab] = useState<"properties" | "warnings" | "dimensions">("properties")
+  
+  const { 
+    instances, 
+    templates, 
+    selectedIds, 
+    updateInstance, 
+    room 
+  } = useAppStore()
+  
+  const selectedInstance = selectedIds.length === 1 
+    ? instances.find(i => i.id === selectedIds[0])
+    : null
+  
+  const template = selectedInstance 
+    ? getTemplateById(templates, selectedInstance.templateId)
+    : null
+  
+  const warnings = evalWarnings(useAppStore.getState())
 
   const tabs = [
     { id: "properties", label: "Properties" },
@@ -30,19 +40,82 @@ export function RightPanel({ selectedItem, onChangeProperty }: RightPanelProps) 
     { id: "dimensions", label: "Dimensions" },
   ]
 
-  const elementType = selectedItem?.type || "cabinet"
-  const cabinetSubtype = selectedItem?.subtype || "base"
-  const isBaseCabinet = cabinetSubtype === "base"
-  const isWallCabinet = cabinetSubtype === "wall"
-  const isTallCabinet = cabinetSubtype === "tall"
-
   const handleDimensionChange = (property: string, value: string) => {
-    const numValue = Number.parseFloat(value)
-    if (!isNaN(numValue)) {
-      const rounded = roundToEighthInch(numValue)
-      onChangeProperty(property, rounded)
+    if (!selectedInstance) return
+    
+    const numValue = parseInches(value)
+    if (isNaN(numValue)) return
+    
+    // Clamp to allowed values if template has restrictions
+    let clampedValue = numValue
+    if (template?.allowedWidthsIn && property === 'widthIn') {
+      clampedValue = clampToAllowed(numValue, template.allowedWidthsIn)
+    }
+    
+    updateInstance(selectedInstance.id, { [property]: clampedValue })
+  }
+
+  const cycleWidth = (direction: number) => {
+    if (!selectedInstance || !template?.allowedWidthsIn) return
+
+    const currentWidth = selectedInstance.widthIn || 0
+    const allowedWidths = template.allowedWidthsIn
+    const currentIndex = allowedWidths.indexOf(currentWidth)
+    
+    if (currentIndex === -1) return // Current width not in allowed list
+
+    const newIndex = currentIndex + direction
+    if (newIndex >= 0 && newIndex < allowedWidths.length) {
+      updateInstance(selectedInstance.id, { widthIn: allowedWidths[newIndex] })
     }
   }
+
+  const canDecreaseWidth = template?.allowedWidthsIn && selectedInstance && 
+    template.allowedWidthsIn.indexOf(selectedInstance.widthIn || 0) > 0
+
+  const canIncreaseWidth = template?.allowedWidthsIn && selectedInstance && 
+    template.allowedWidthsIn.indexOf(selectedInstance.widthIn || 0) < template.allowedWidthsIn.length - 1
+
+  const handleOptionChange = (option: string, value: string) => {
+    if (!selectedInstance) return
+    
+    const updates: any = {
+      options: {
+        ...selectedInstance.options,
+        [option]: value
+      }
+    }
+    
+    // If top alignment changed, recalculate Y position
+    if (option === 'topAlignment' && template?.category === 'wall') {
+      const topAlignment = parseFloat(value)
+      const newY = topAlignment - (selectedInstance.heightIn || 0)
+      updates.y = newY
+    }
+    
+    updateInstance(selectedInstance.id, updates)
+  }
+
+  const handleRotationChange = (value: string) => {
+    if (!selectedInstance) return
+    
+    updateInstance(selectedInstance.id, {
+      rot: parseInt(value) as 0 | 90 | 180 | 270
+    })
+  }
+
+  const handleNotesChange = (value: string) => {
+    if (!selectedInstance) return
+    
+    updateInstance(selectedInstance.id, {
+      options: {
+        ...selectedInstance.options,
+        notes: value
+      }
+    })
+  }
+
+  const instanceWarnings = warnings.filter(w => w.instanceId === selectedInstance?.id)
 
   return (
     <aside className="w-80 border-l border-border bg-card flex flex-col">
@@ -59,13 +132,18 @@ export function RightPanel({ selectedItem, onChangeProperty }: RightPanelProps) 
               }`}
             >
               {tab.label}
+              {tab.id === "warnings" && instanceWarnings.length > 0 && (
+                <span className="ml-2 inline-flex items-center justify-center w-4 h-4 text-xs bg-red-500 text-white rounded-full">
+                  {instanceWarnings.length}
+                </span>
+              )}
             </button>
           ))}
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">
-        {!selectedItem ? (
+        {!selectedInstance ? (
           <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground">
             <p className="text-sm">No item selected</p>
             <p className="text-xs mt-2">Select an element from the canvas to edit its properties</p>
@@ -74,345 +152,109 @@ export function RightPanel({ selectedItem, onChangeProperty }: RightPanelProps) 
           <>
             {activeTab === "properties" && (
               <div className="space-y-4">
-                <div className="rounded-lg bg-secondary border border-border p-2">
-                  <p className="text-xs font-medium text-muted-foreground">
-                    Type: <span className="text-foreground capitalize">{elementType}</span>
-                    {elementType === "cabinet" && (
-                      <span className="ml-2">
-                        • <span className="capitalize">{cabinetSubtype}</span>
-                      </span>
-                    )}
+                <div className="rounded-lg bg-secondary border border-border p-3">
+                  <h3 className="text-sm font-medium text-foreground mb-1">
+                    {selectedInstance.derived.title}
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    {template?.category} • SKU: {selectedInstance.derived.sku}
                   </p>
                 </div>
 
-                {elementType === "wall" && (
-                  <>
-                    <div className="space-y-2">
-                      <Label htmlFor="wall-length">Length (inches)</Label>
-                      <Input
-                        id="wall-length"
-                        type="number"
-                        defaultValue={96}
-                        step={0.125}
-                        onChange={(e) => handleDimensionChange("length", e.target.value)}
-                        className="bg-background border-border"
-                      />
-                      <p className="text-xs text-muted-foreground">Custom length in 1/8" increments</p>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="wall-thickness">Thickness (inches)</Label>
-                      <Input
-                        id="wall-thickness"
-                        type="number"
-                        defaultValue={6}
-                        step={0.125}
-                        onChange={(e) => handleDimensionChange("thickness", e.target.value)}
-                        className="bg-background border-border"
-                      />
-                      <p className="text-xs text-muted-foreground">Standard: 4.5" (interior), 6" (exterior)</p>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="wall-type">Wall Type</Label>
-                      <Select defaultValue="interior" onValueChange={(value) => onChangeProperty("wallType", value)}>
-                        <SelectTrigger id="wall-type" className="bg-background border-border">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="interior">Interior</SelectItem>
-                          <SelectItem value="exterior">Exterior</SelectItem>
-                          <SelectItem value="load-bearing">Load Bearing</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </>
-                )}
-
-                {elementType === "door" && (
-                  <>
-                    <div className="space-y-2">
-                      <Label htmlFor="door-width">Width (inches)</Label>
-                      <Input
-                        id="door-width"
-                        type="number"
-                        defaultValue={36}
-                        step={0.125}
-                        onChange={(e) => handleDimensionChange("width", e.target.value)}
-                        className="bg-background border-border"
-                      />
-                      <p className="text-xs text-muted-foreground">Custom width in 1/8" increments</p>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="door-height">Height (inches)</Label>
-                      <Input
-                        id="door-height"
-                        type="number"
-                        defaultValue={80}
-                        step={0.125}
-                        onChange={(e) => handleDimensionChange("height", e.target.value)}
-                        className="bg-background border-border"
-                      />
-                      <p className="text-xs text-muted-foreground">Custom height in 1/8" increments</p>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="door-swing">Swing Direction</Label>
-                      <Select defaultValue="inward-left" onValueChange={(value) => onChangeProperty("swing", value)}>
-                        <SelectTrigger id="door-swing" className="bg-background border-border">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="inward-left">Inward Left</SelectItem>
-                          <SelectItem value="inward-right">Inward Right</SelectItem>
-                          <SelectItem value="outward-left">Outward Left</SelectItem>
-                          <SelectItem value="outward-right">Outward Right</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="door-type">Door Type</Label>
-                      <Select defaultValue="single" onValueChange={(value) => onChangeProperty("doorType", value)}>
-                        <SelectTrigger id="door-type" className="bg-background border-border">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="single">Single</SelectItem>
-                          <SelectItem value="double">Double</SelectItem>
-                          <SelectItem value="sliding">Sliding</SelectItem>
-                          <SelectItem value="pocket">Pocket</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </>
-                )}
-
-                {elementType === "window" && (
-                  <>
-                    <div className="space-y-2">
-                      <Label htmlFor="window-width">Width (inches)</Label>
-                      <Input
-                        id="window-width"
-                        type="number"
-                        defaultValue={36}
-                        step={0.125}
-                        onChange={(e) => handleDimensionChange("width", e.target.value)}
-                        className="bg-background border-border"
-                      />
-                      <p className="text-xs text-muted-foreground">Custom width in 1/8" increments</p>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="window-height">Height (inches)</Label>
-                      <Input
-                        id="window-height"
-                        type="number"
-                        defaultValue={48}
-                        step={0.125}
-                        onChange={(e) => handleDimensionChange("height", e.target.value)}
-                        className="bg-background border-border"
-                      />
-                      <p className="text-xs text-muted-foreground">Custom height in 1/8" increments</p>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="sill-height">Sill Height (inches)</Label>
-                      <Input
-                        id="sill-height"
-                        type="number"
-                        defaultValue={36}
-                        step={0.125}
-                        onChange={(e) => handleDimensionChange("sillHeight", e.target.value)}
-                        className="bg-background border-border"
-                      />
-                      <p className="text-xs text-muted-foreground">Height from floor to bottom of window</p>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="window-type">Window Type</Label>
-                      <Select
-                        defaultValue="single-hung"
-                        onValueChange={(value) => onChangeProperty("windowType", value)}
+                {/* Width/Length */}
+                <div className="space-y-2">
+                  <Label htmlFor="width">
+                    {template?.category === 'room' && template?.id.startsWith('WALL') ? 'Length' : 'Width'} (inches)
+                  </Label>
+                  {template?.allowedWidthsIn ? (
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => cycleWidth(-1)}
+                        disabled={!canDecreaseWidth}
+                        className="h-8 w-8 p-0"
                       >
-                        <SelectTrigger id="window-type" className="bg-background border-border">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="single-hung">Single Hung</SelectItem>
-                          <SelectItem value="double-hung">Double Hung</SelectItem>
-                          <SelectItem value="casement">Casement</SelectItem>
-                          <SelectItem value="sliding">Sliding</SelectItem>
-                          <SelectItem value="bay">Bay</SelectItem>
-                          <SelectItem value="picture">Picture</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </>
-                )}
-
-                {elementType === "cabinet" && (
-                  <>
-                    <div className="space-y-2">
-                      <Label htmlFor="width">Width (inches)</Label>
+                        -
+                      </Button>
                       <Input
                         id="width"
-                        type="number"
-                        defaultValue={30}
-                        step={3}
-                        onChange={(e) => handleDimensionChange("width", e.target.value)}
-                        className="bg-background border-border"
+                        type="text"
+                        value={fmtInches(selectedInstance.widthIn || 0)}
+                        onChange={(e) => handleDimensionChange("widthIn", e.target.value)}
+                        className="bg-background border-border text-center"
+                        placeholder="Enter width"
                       />
-                      <p className="text-xs text-muted-foreground">
-                        {isBaseCabinet && '9"-42" in 3" increments'}
-                        {isWallCabinet && '12"-36" in 3" increments'}
-                        {isTallCabinet && '18"-36" in 3" increments'}
-                      </p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => cycleWidth(1)}
+                        disabled={!canIncreaseWidth}
+                        className="h-8 w-8 p-0"
+                      >
+                        +
+                      </Button>
                     </div>
+                  ) : (
+                    <Input
+                      id="width"
+                      type="text"
+                      value={fmtInches(selectedInstance.widthIn || 0)}
+                      onChange={(e) => handleDimensionChange("widthIn", e.target.value)}
+                      className="bg-background border-border"
+                      placeholder={`Enter ${template?.category === 'room' && template?.id.startsWith('WALL') ? 'length' : 'width'}`}
+                    />
+                  )}
+                  {template?.allowedWidthsIn && (
+                    <p className="text-xs text-muted-foreground">
+                      Allowed: {template.allowedWidthsIn.join('", "')}"
+                    </p>
+                  )}
+                </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="depth">Depth (inches)</Label>
-                      {isBaseCabinet ? (
-                        <>
-                          <Input
-                            id="depth"
-                            type="number"
-                            defaultValue={24}
-                            step={0.125}
-                            onChange={(e) => handleDimensionChange("depth", e.target.value)}
-                            className="bg-background border-border"
-                          />
-                          <p className="text-xs text-muted-foreground">Standard base cabinet depth: 24"</p>
-                        </>
-                      ) : (
-                        <>
-                          <Select
-                            defaultValue={isWallCabinet ? "12" : "24"}
-                            onValueChange={(value) => onChangeProperty("depth", Number.parseFloat(value))}
-                          >
-                            <SelectTrigger id="depth" className="bg-background border-border">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {isWallCabinet && (
-                                <>
-                                  <SelectItem value="12">12" (Standard)</SelectItem>
-                                  <SelectItem value="24">24" (Deep)</SelectItem>
-                                </>
-                              )}
-                              {isTallCabinet && (
-                                <>
-                                  <SelectItem value="24">24" (Standard)</SelectItem>
-                                  <SelectItem value="12">12" (Tight Spaces)</SelectItem>
-                                </>
-                              )}
-                            </SelectContent>
-                          </Select>
-                          <p className="text-xs text-muted-foreground">
-                            {isWallCabinet && 'Standard: 12", Deep: 24"'}
-                            {isTallCabinet && 'Standard: 24", Tight spaces: 12"'}
-                          </p>
-                        </>
-                      )}
-                    </div>
+                {/* Height */}
+                <div className="space-y-2">
+                  <Label htmlFor="height">Height (inches)</Label>
+                  <Input
+                    id="height"
+                    type="text"
+                    value={fmtInches(selectedInstance.heightIn || 0)}
+                    onChange={(e) => handleDimensionChange("heightIn", e.target.value)}
+                    className="bg-background border-border"
+                    placeholder="Enter height"
+                  />
+                  {template?.allowedHeightsIn && (
+                    <p className="text-xs text-muted-foreground">
+                      Allowed: {template.allowedHeightsIn.join('", "')}"
+                    </p>
+                  )}
+                </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="height">Height (inches)</Label>
-                      {isBaseCabinet ? (
-                        <>
-                          <Input
-                            id="height"
-                            type="number"
-                            defaultValue={34.5}
-                            step={0.125}
-                            onChange={(e) => handleDimensionChange("height", e.target.value)}
-                            className="bg-background border-border"
-                          />
-                          <p className="text-xs text-muted-foreground">Standard base cabinet height: 34.5"</p>
-                        </>
-                      ) : isWallCabinet ? (
-                        <>
-                          <Select
-                            defaultValue="36"
-                            onValueChange={(value) => onChangeProperty("height", Number.parseFloat(value))}
-                          >
-                            <SelectTrigger id="height" className="bg-background border-border">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="30">30"</SelectItem>
-                              <SelectItem value="36">36"</SelectItem>
-                              <SelectItem value="42">42"</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <p className="text-xs text-muted-foreground">Standard wall cabinet heights</p>
-                        </>
-                      ) : isTallCabinet ? (
-                        <>
-                          <Select
-                            defaultValue="90"
-                            onValueChange={(value) => onChangeProperty("height", Number.parseFloat(value))}
-                          >
-                            <SelectTrigger id="height" className="bg-background border-border">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="84">84" (with 30" wall cabinets)</SelectItem>
-                              <SelectItem value="90">90" (with 36" wall cabinets)</SelectItem>
-                              <SelectItem value="96">96" (with 42" wall cabinets)</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <p className="text-xs text-muted-foreground">Standard tall cabinet heights</p>
-                        </>
-                      ) : (
-                        <>
-                          <Input
-                            id="height"
-                            type="number"
-                            defaultValue={30}
-                            step={0.125}
-                            onChange={(e) => handleDimensionChange("height", e.target.value)}
-                            className="bg-background border-border"
-                          />
-                          <p className="text-xs text-muted-foreground">Custom height in 1/8" increments</p>
-                        </>
-                      )}
-                    </div>
+                {/* Depth */}
+                <div className="space-y-2">
+                  <Label htmlFor="depth">Depth (inches)</Label>
+                  <Input
+                    id="depth"
+                    type="text"
+                    value={fmtInches(selectedInstance.depthIn || 0)}
+                    onChange={(e) => handleDimensionChange("depthIn", e.target.value)}
+                    className="bg-background border-border"
+                    placeholder="Enter depth"
+                  />
+                  {template?.allowedDepthsIn && (
+                    <p className="text-xs text-muted-foreground">
+                      Allowed: {template.allowedDepthsIn.join('", "')}"
+                    </p>
+                  )}
+                </div>
 
-                    {isBaseCabinet && (
-                      <div className="space-y-2">
-                        <Label htmlFor="toe-kick">Toe Kick Height (inches)</Label>
-                        <Input
-                          id="toe-kick"
-                          type="number"
-                          defaultValue={4.5}
-                          step={0.125}
-                          onChange={(e) => handleDimensionChange("toeKick", e.target.value)}
-                          className="bg-background border-border"
-                        />
-                        <p className="text-xs text-muted-foreground">Standard toe kick: 4.5"</p>
-                      </div>
-                    )}
-
-                    <div className="space-y-2">
-                      <Label htmlFor="hinge">Hinge Side</Label>
-                      <Select defaultValue="left" onValueChange={(value) => onChangeProperty("hinge", value)}>
-                        <SelectTrigger id="hinge" className="bg-background border-border">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="left">Left</SelectItem>
-                          <SelectItem value="right">Right</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </>
-                )}
-
+                {/* Rotation */}
                 <div className="space-y-2">
                   <Label htmlFor="rotation">Rotation</Label>
-                  <Select defaultValue="0" onValueChange={(value) => onChangeProperty("rotation", value)}>
+                  <Select 
+                    value={selectedInstance.rot.toString()} 
+                    onValueChange={handleRotationChange}
+                  >
                     <SelectTrigger id="rotation" className="bg-background border-border">
                       <SelectValue />
                     </SelectTrigger>
@@ -425,47 +267,76 @@ export function RightPanel({ selectedItem, onChangeProperty }: RightPanelProps) 
                   </Select>
                 </div>
 
+                {/* Hinge (if template has hinge options) */}
+                {template?.options?.hinge && (
+                  <div className="space-y-2">
+                    <Label htmlFor="hinge">Hinge Side</Label>
+                    <Select 
+                      value={selectedInstance.options.hinge || template.options.hinge[0]} 
+                      onValueChange={(value) => handleOptionChange("hinge", value)}
+                    >
+                      <SelectTrigger id="hinge" className="bg-background border-border">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {template.options.hinge.map(option => (
+                          <SelectItem key={option} value={option}>
+                            {option === 'L' ? 'Left' : 'Right'}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                {/* Top Alignment (for wall cabinets) */}
+                {template?.options?.topAlignment && (
+                  <div className="space-y-2">
+                    <Label htmlFor="topAlignment">Top Alignment</Label>
+                    <Select 
+                      value={selectedInstance.options.topAlignment || template.options.topAlignment[1]} 
+                      onValueChange={(value) => handleOptionChange("topAlignment", value)}
+                    >
+                      <SelectTrigger id="topAlignment" className="bg-background border-border">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {template.options.topAlignment.map(option => (
+                          <SelectItem key={option} value={option}>
+                            {option}"
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Height from floor to top of cabinet
+                    </p>
+                  </div>
+                )}
+
+                {/* Notes */}
                 <div className="space-y-2">
                   <Label htmlFor="notes">Notes</Label>
                   <Textarea
                     id="notes"
-                    placeholder={`Add notes about this ${elementType}...`}
-                    onChange={(e) => onChangeProperty("notes", e.target.value)}
+                    placeholder="Add notes about this item..."
+                    value={selectedInstance.options.notes || ''}
+                    onChange={(e) => handleNotesChange(e.target.value)}
                     className="bg-background border-border min-h-[80px]"
                   />
                 </div>
 
-                {elementType === "cabinet" && isBaseCabinet && (
+                {/* Template info */}
+                {template && (
                   <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 p-3">
                     <div className="flex gap-2">
                       <AlertCircle className="h-4 w-4 text-blue-500 flex-shrink-0 mt-0.5" />
                       <div className="text-xs text-blue-500">
-                        <p className="font-medium mb-1">Base Cabinet Standards</p>
-                        <p>34.5" H • 24" D • 4.5" toe kick • 9"-42" W (3" increments)</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {elementType === "cabinet" && isWallCabinet && (
-                  <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 p-3">
-                    <div className="flex gap-2">
-                      <AlertCircle className="h-4 w-4 text-blue-500 flex-shrink-0 mt-0.5" />
-                      <div className="text-xs text-blue-500">
-                        <p className="font-medium mb-1">Wall Cabinet Standards</p>
-                        <p>30"/36"/42" H • 12"/24" D • 12"-36" W (3" increments)</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {elementType === "cabinet" && isTallCabinet && (
-                  <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 p-3">
-                    <div className="flex gap-2">
-                      <AlertCircle className="h-4 w-4 text-blue-500 flex-shrink-0 mt-0.5" />
-                      <div className="text-xs text-blue-500">
-                        <p className="font-medium mb-1">Tall Cabinet Standards</p>
-                        <p>84"/90"/96" H • 24"/12" D • 18"-36" W (3" increments)</p>
+                        <p className="font-medium mb-1">{template.category} Cabinet Standards</p>
+                        <p>
+                          {template.heightIn}" H • {template.depthIn}" D
+                          {template.allowedWidthsIn && ` • ${template.allowedWidthsIn.join('", "')}" W`}
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -475,25 +346,41 @@ export function RightPanel({ selectedItem, onChangeProperty }: RightPanelProps) 
 
             {activeTab === "warnings" && (
               <div className="space-y-3">
-                <div className="rounded-lg bg-yellow-500/10 border border-yellow-500/20 p-3">
-                  <div className="flex gap-2">
-                    <AlertCircle className="h-4 w-4 text-yellow-500 flex-shrink-0 mt-0.5" />
-                    <div className="text-xs">
-                      <p className="font-medium text-yellow-500 mb-1">Non-standard width</p>
-                      <p className="text-muted-foreground">Current width (31") doesn't match allowed values</p>
-                    </div>
+                {instanceWarnings.length === 0 ? (
+                  <div className="text-center text-muted-foreground py-8">
+                    <p className="text-sm">No warnings</p>
+                    <p className="text-xs mt-1">This item meets all design standards</p>
                   </div>
-                </div>
-
-                <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3">
-                  <div className="flex gap-2">
-                    <AlertCircle className="h-4 w-4 text-red-500 flex-shrink-0 mt-0.5" />
-                    <div className="text-xs">
-                      <p className="font-medium text-red-500 mb-1">Collision detected</p>
-                      <p className="text-muted-foreground">This element overlaps with adjacent item</p>
+                ) : (
+                  instanceWarnings.map((warning, index) => (
+                    <div 
+                      key={index}
+                      className={`rounded-lg border p-3 ${
+                        warning.code.includes('CONFLICT') || warning.code.includes('DISTANCE')
+                          ? 'bg-red-500/10 border-red-500/20'
+                          : 'bg-yellow-500/10 border-yellow-500/20'
+                      }`}
+                    >
+                      <div className="flex gap-2">
+                        <AlertCircle className={`h-4 w-4 flex-shrink-0 mt-0.5 ${
+                          warning.code.includes('CONFLICT') || warning.code.includes('DISTANCE')
+                            ? 'text-red-500'
+                            : 'text-yellow-500'
+                        }`} />
+                        <div className="text-xs">
+                          <p className={`font-medium mb-1 ${
+                            warning.code.includes('CONFLICT') || warning.code.includes('DISTANCE')
+                              ? 'text-red-500'
+                              : 'text-yellow-500'
+                          }`}>
+                            {warning.code.replace(/_/g, ' ')}
+                          </p>
+                          <p className="text-muted-foreground">{warning.message}</p>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
+                  ))
+                )}
               </div>
             )}
 
@@ -502,21 +389,21 @@ export function RightPanel({ selectedItem, onChangeProperty }: RightPanelProps) 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Width</Label>
-                    <p className="text-sm font-medium">30"</p>
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs text-muted-foreground">
-                      {elementType === "wall" ? "Length" : "Depth"}
-                    </Label>
-                    <p className="text-sm font-medium">24"</p>
+                    <p className="text-sm font-medium">{fmtInches(selectedInstance.widthIn || 0)}</p>
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Height</Label>
-                    <p className="text-sm font-medium">34.5"</p>
+                    <p className="text-sm font-medium">{fmtInches(selectedInstance.heightIn || 0)}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Depth</Label>
+                    <p className="text-sm font-medium">{fmtInches(selectedInstance.depthIn || 0)}</p>
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Area</Label>
-                    <p className="text-sm font-medium">720 in²</p>
+                    <p className="text-sm font-medium">
+                      {Math.round((selectedInstance.widthIn || 0) * (selectedInstance.heightIn || 0))} in²
+                    </p>
                   </div>
                 </div>
 
@@ -525,11 +412,27 @@ export function RightPanel({ selectedItem, onChangeProperty }: RightPanelProps) 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
                       <Label className="text-xs text-muted-foreground">X</Label>
-                      <p className="text-sm font-medium">120"</p>
+                      <p className="text-sm font-medium">{fmtInches(selectedInstance.x)}</p>
                     </div>
                     <div className="space-y-1">
                       <Label className="text-xs text-muted-foreground">Y</Label>
-                      <p className="text-sm font-medium">0"</p>
+                      <p className="text-sm font-medium">{fmtInches(selectedInstance.y)}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-t border-border pt-4 space-y-3">
+                  <h3 className="text-sm font-medium">Room Info</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">Ceiling Height</Label>
+                      <p className="text-sm font-medium">{fmtInches(room.ceilingHeightIn)}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">Plumbing</Label>
+                      <p className="text-sm font-medium">
+                        {fmtInches(room.plumbing.x)}, {fmtInches(room.plumbing.y)}
+                      </p>
                     </div>
                   </div>
                 </div>

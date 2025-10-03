@@ -1,9 +1,14 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Search, ChevronDown, ChevronRight, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { useAppStore } from "@/lib/store"
+import { loadCatalog } from "@/lib/catalog"
+import { Template } from "@/lib/types"
+
+console.log("Sidebar component loaded")
 
 const categories = [
   { id: "room", name: "Room Elements", icon: "🏠" },
@@ -14,211 +19,26 @@ const categories = [
   { id: "appliances", name: "Appliances", icon: "🔌" },
 ]
 
-const templates = [
-  {
-    id: 101,
-    title: "Wall Segment",
-    category: "room",
-    type: "wall",
-    description: 'Custom length wall segment (1/8" increments)',
-    customizable: true,
-  },
-  {
-    id: 102,
-    title: "Single Door",
-    category: "room",
-    type: "door",
-    description: 'Custom width door (1/8" increments)',
-    customizable: true,
-  },
-  {
-    id: 103,
-    title: "Double Door",
-    category: "room",
-    type: "door",
-    description: 'Custom width double door (1/8" increments)',
-    customizable: true,
-  },
-  {
-    id: 104,
-    title: "Single Window",
-    category: "room",
-    type: "window",
-    description: 'Custom dimensions window (1/8" increments)',
-    customizable: true,
-  },
-  {
-    id: 105,
-    title: "Double Window",
-    category: "room",
-    type: "window",
-    description: 'Custom dimensions window (1/8" increments)',
-    customizable: true,
-  },
-  // Base Cabinets - 34.5" H, 24" D, 4.5" toe kick
-  {
-    id: 1,
-    title: "Base 1-Door 1-Drawer (Left)",
-    category: "base",
-    type: "cabinet",
-    subtype: "base",
-    description: '12"-24" W • 34.5" H • 24" D • 4.5" toe kick',
-    widthRange: { min: 12, max: 24, increment: 3 },
-  },
-  {
-    id: 2,
-    title: "Base 1-Door 1-Drawer (Right)",
-    category: "base",
-    type: "cabinet",
-    subtype: "base",
-    description: '12"-24" W • 34.5" H • 24" D • 4.5" toe kick',
-    widthRange: { min: 12, max: 24, increment: 3 },
-  },
-  {
-    id: 3,
-    title: "Base 2-Door 1-Drawer",
-    category: "base",
-    type: "cabinet",
-    subtype: "base",
-    description: '24"-36" W • 34.5" H • 24" D • 4.5" toe kick',
-    widthRange: { min: 24, max: 36, increment: 3 },
-  },
-  {
-    id: 4,
-    title: "Base 2-Door 2-Drawer",
-    category: "base",
-    type: "cabinet",
-    subtype: "base",
-    description: '39"-48" W • 34.5" H • 24" D • 4.5" toe kick',
-    widthRange: { min: 39, max: 48, increment: 3 },
-  },
-  {
-    id: 5,
-    title: "Base Full Height Single Door",
-    category: "base",
-    type: "cabinet",
-    subtype: "base",
-    description: '9"-24" W • 34.5" H • 24" D • 4.5" toe kick',
-    widthRange: { min: 9, max: 24, increment: 3 },
-  },
-  {
-    id: 6,
-    title: "Base Full Height Double Door",
-    category: "base",
-    type: "cabinet",
-    subtype: "base",
-    description: '24"-42" W • 34.5" H • 24" D • 4.5" toe kick',
-    widthRange: { min: 24, max: 42, increment: 3 },
-  },
-  // Wall Cabinets - Heights: 30", 36", 42" • Depths: 12", 24"
-  {
-    id: 7,
-    title: "Wall Single Door",
-    category: "wall",
-    type: "cabinet",
-    subtype: "wall",
-    description: '12"-36" W • 30"/36"/42" H • 12"/24" D',
-    widthRange: { min: 12, max: 36, increment: 3 },
-    heights: [30, 36, 42],
-    depths: [12, 24],
-  },
-  {
-    id: 8,
-    title: "Wall Double Door",
-    category: "wall",
-    type: "cabinet",
-    subtype: "wall",
-    description: '24"-36" W • 30"/36"/42" H • 12"/24" D',
-    widthRange: { min: 24, max: 36, increment: 3 },
-    heights: [30, 36, 42],
-    depths: [12, 24],
-  },
-  // Tall Cabinets - Heights: 84", 90", 96" • Depths: 24", 12"
-  {
-    id: 9,
-    title: "Tall Pantry Cabinet",
-    category: "tall",
-    type: "cabinet",
-    subtype: "tall",
-    description: '18"-36" W • 84"/90"/96" H • 24"/12" D',
-    widthRange: { min: 18, max: 36, increment: 3 },
-    heights: [84, 90, 96],
-    depths: [24, 12],
-  },
-  {
-    id: 10,
-    title: "Tall Utility Cabinet",
-    category: "tall",
-    type: "cabinet",
-    subtype: "tall",
-    description: '18"-36" W • 84"/90"/96" H • 24"/12" D',
-    widthRange: { min: 18, max: 36, increment: 3 },
-    heights: [84, 90, 96],
-    depths: [24, 12],
-  },
-  {
-    id: 16,
-    title: "Tall Oven Cabinet",
-    category: "tall",
-    type: "cabinet",
-    subtype: "tall",
-    description: '27"-33" W • 84"/90"/96" H • 24" D',
-    widthRange: { min: 27, max: 33, increment: 3 },
-    heights: [84, 90, 96],
-    depths: [24],
-  },
-  // Trim
-  {
-    id: 11,
-    title: "Crown Molding",
-    category: "trim",
-    type: "trim",
-    description: 'Custom length (1/8" increments)',
-    customizable: true,
-  },
-  {
-    id: 12,
-    title: "Base Molding",
-    category: "trim",
-    type: "trim",
-    description: 'Custom length (1/8" increments)',
-    customizable: true,
-  },
-  // Appliances
-  {
-    id: 13,
-    title: "Dishwasher Opening",
-    category: "appliances",
-    type: "appliance",
-    description: '24" W standard',
-    widthRange: { min: 24, max: 24, increment: 3 },
-  },
-  {
-    id: 14,
-    title: "Range Opening",
-    category: "appliances",
-    type: "appliance",
-    description: '30"-36" W (3" increments)',
-    widthRange: { min: 30, max: 36, increment: 3 },
-  },
-  {
-    id: 15,
-    title: "Refrigerator Opening",
-    category: "appliances",
-    type: "appliance",
-    description: '33"-48" W (3" increments)',
-    widthRange: { min: 33, max: 48, increment: 3 },
-  },
-]
-
 interface SidebarPaletteProps {
-  onAddTemplate: (template: any) => void
+  onAddTemplate?: (template: any) => void
+  onWindowPlacement?: (templateId: string) => void
 }
 
-export function SidebarPalette({ onAddTemplate }: SidebarPaletteProps) {
+export function SidebarPalette({ onAddTemplate, onWindowPlacement }: SidebarPaletteProps) {
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(["room", "base", "wall"]))
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(["room", "base"]))
+  
+  const { templates, addInstance } = useAppStore()
+  
+  // Load catalog on component mount
+  useEffect(() => {
+    loadCatalog().then(templates => {
+      useAppStore.getState().initTemplates(templates)
+    }).catch(error => {
+      console.error("Error loading catalog:", error)
+    })
+  }, [])
 
   const toggleCategory = (categoryId: string) => {
     const newExpanded = new Set(expandedCategories)
@@ -235,6 +55,16 @@ export function SidebarPalette({ onAddTemplate }: SidebarPaletteProps) {
     const matchesCategory = !selectedCategory || template.category === selectedCategory
     return matchesSearch && matchesCategory
   })
+  
+  const handleAddTemplate = (template: Template) => {
+    console.log("handleAddTemplate called with:", template.id)
+    // Add all templates (including windows) directly to canvas
+    addInstance(template.id)
+    // Call legacy callback if provided
+    if (onAddTemplate) {
+      onAddTemplate(template)
+    }
+  }
 
   return (
     <aside className="w-80 border-r border-border bg-card flex flex-col">
@@ -304,14 +134,16 @@ export function SidebarPalette({ onAddTemplate }: SidebarPaletteProps) {
                       <div className="flex items-start justify-between mb-2">
                         <div>
                           <h3 className="text-sm font-medium text-foreground">{template.title}</h3>
-                          <p className="text-xs text-muted-foreground mt-0.5">{template.description}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {template.allowedWidthsIn?.join('", "')}" W • {template.defaultHeightIn || template.allowedHeightsIn?.[0] || 'N/A'}" H • {template.depthIn || 'N/A'}" D
+                          </p>
                         </div>
                       </div>
 
                       <div className="flex items-center justify-end">
                         <Button
                           size="sm"
-                          onClick={() => onAddTemplate(template)}
+                          onClick={() => handleAddTemplate(template)}
                           className="h-7 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
                         >
                           <Plus className="h-3 w-3 mr-1" />
